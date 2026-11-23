@@ -2,14 +2,15 @@
 
 Understand a repository. Follow its architecture. Learn to build it yourself.
 
-Abstract is a planned website that turns a GitHub repository into a source-linked learning environment: architecture diagrams, feature walkthroughs, code explanations, and practical exercises.
+Abstract is a local repository explorer being built into a source-linked learning environment: architecture diagrams, feature walkthroughs, code explanations, and practical exercises.
 
 The goal is to help a learner explain how a project works, locate the code responsible for a behavior, and implement a related change independently.
 
-> **Current status:** documentation and project specification only. The application, repository analyzer, GitHub integration, and AI integration are not implemented yet. All architecture, routes, schemas, limits, and milestones below describe the intended implementation.
+> **Current status:** the Milestone 1 repository explorer is implemented. It includes a Next.js interface, public GitHub ingestion, immutable snapshots, source filtering, an on-demand source viewer, coverage reporting, and local SQLite persistence. Architecture analysis, diagrams, Gemini, lessons, and GitHub account connection remain planned. The specification below distinguishes the implemented explorer from the intended full product.
 
 ## Contents
 
+- [Current capabilities and setup](#current-capabilities-and-setup)
 - [Product goals](#product-goals)
 - [First version and boundaries](#first-version-and-boundaries)
 - [User experience](#user-experience)
@@ -27,6 +28,84 @@ The goal is to help a learner explain how a project works, locate the code respo
 - [Verification and acceptance](#verification-and-acceptance)
 - [Development handoff](#development-handoff)
 - [Official references](#official-references)
+
+## Current capabilities and setup
+
+### Run locally
+
+Use **Node.js 22.16 or newer**; the server uses built-in `node:sqlite`. Development in this session used Node.js 26.0.0.
+
+```bash
+npm ci
+npm run dev
+```
+
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000). The server binds to loopback for this personal prototype.
+
+No API key is needed for the explorer. Paste a public GitHub **repository root** URL, such as `https://github.com/owner/repository`. Branch/file URLs, private repositories, and non-GitHub hosts are rejected. A repository's default branch is resolved to a commit before its file tree is read.
+
+The “Try a small repository” button fills the public `octocat/Hello-World` URL; it does not load fake demo content. It is a small source-browsing example, not a Next.js architecture example.
+
+Optional configuration:
+
+```bash
+cp .env.example .env.local
+```
+
+- `GITHUB_TOKEN`: optional server-side token for GitHub requests. Keep permissions minimal. The explorer still rejects private repositories even if the token could read them.
+- `ABSTRACT_DATA_DIR`: persistent local data directory; defaults to `.abstract` in the project root. The SQLite database is `abstract.sqlite` inside it.
+
+GitHub request limits still apply. A public repository normally requires three requests to discover its metadata, commit, and tree, followed by one request per newly opened source blob. Previously opened source is restored from SQLite without another GitHub download.
+
+For a production-mode local preview:
+
+```bash
+npm run build
+npm run start
+```
+
+This application is not ready for an unauthenticated public deployment. Multi-user authorization, durable background jobs, and hosting-specific storage are later work.
+
+### What works now
+
+- Public repository import with streamed progress and actionable errors.
+- Commit-pinned tree and source navigation; file contents are verified against Git blob hashes.
+- File filtering, 200-file / 64 KiB-per-file / 2 MiB selection budgets, and bounded upstream downloads.
+- On-demand UTF-8 source downloads, SHA-256 content hashes, line selection, line jumps, copying, and immutable GitHub links.
+- Searchable file tree, snapshot overview, searchable/filterable coverage table, and per-file exclusion/failure reasons.
+- Local recent snapshots, restoration through URL parameters, and removal of a snapshot and its cached source.
+- Responsive desktop/mobile layouts and keyboard navigation for repository-view tabs.
+- No imported repository is executed, and no source is sent to an AI provider.
+
+Selection uses file conventions. GitHub's repository language is displayed as reported, while framework detection and source parsing are explicitly unavailable. Lockfiles, generated directories, environment files (including examples), symbolic links, submodules, binaries, and unsupported file types are excluded. Obvious embedded key/token patterns are checked before source is saved; this is a conservative heuristic, not a complete secret scanner.
+
+The explorer reads a bounded recursive GitHub tree. If GitHub truncates it or the 10,000-entry inspection limit is reached, discovery is labeled partial; undiscovered entries are not counted. Files are downloaded as opened, so “selected” does not mean “downloaded” or “analyzed.”
+
+### Checks
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run test:e2e
+```
+
+The browser suite builds the app, starts an isolated production-mode server on port 3100, and uses a separate `.abstract/browser-tests` database. It covers desktop/mobile layouts, source navigation, coverage, local request validation, streamed UI import, and snapshot removal. Install Playwright's Chromium browser if it is not already installed:
+
+```bash
+npx playwright install chromium
+```
+
+Unit/service checks use explicit GitHub response fixtures, including SHA verification, missing evidence, failed downloads, exclusions, and storage restoration. Browser import responses are mocked at the import boundary; source/snapshot reads use real local APIs. Passing these checks alone does not establish a live GitHub import succeeded. Restricted execution environments may block browser launch or outbound GitHub access; report those limitations separately.
+
+### Verification for this iteration
+
+- 59 unit/service checks pass, including URL boundaries, limits, Git object verification, source exclusions, retries, and persistent storage.
+- Type checking, ESLint, formatting checks, and the production build pass.
+- Manual in-app browser checks verified URL validation, live public import, nested source selection, repeated file selection, line links, restoration after reload, coverage filters, excluded-source handling, and mobile layout/navigation.
+- Live GitHub smoke checks used `octocat/Hello-World` and `shadcn-ui/taxonomy`. At tested commit `298a8857c7128a0d121e7f699dfd729f23b3966d`, Taxonomy produced 188 discovered files, 161 selected files, and 27 skipped files. README and a TypeScript login page were downloaded and verified. These are example results, not counts promised for future commits.
+- Taxonomy's README marks that repository as archived with outdated framework patterns. It is an ingestion/source-browsing smoke example, not a recommended current application template.
+- The standalone Playwright suite could not execute browser assertions in this session because the environment denied Chromium process startup. It remains available for running outside that restriction. Manual browser checks are not a claim that the full automated browser suite passed.
 
 ## Product goals
 
@@ -155,7 +234,7 @@ Feature traces based only on source analysis must be labeled as static traces. T
 
 ### Proposed source organization
 
-The following paths are planned; they do not exist yet.
+The explorer's implemented modules are in `src/app/`, `src/components/workspace/`, `src/lib/github/`, `src/lib/contracts/`, and `src/lib/storage/`. Tests are in `tests/`, with explicit fixtures in `tests/helpers/fixtures.ts`. The remaining paths below are planned for later milestones.
 
 | Path | Responsibility |
 | --- | --- |
@@ -510,7 +589,7 @@ Graph outputs additionally need node IDs, node types, typed edges, evidence IDs,
 | `POST /api/questions` | Answer a question using evidence from one snapshot |
 | `POST /api/lessons` | Generate a lesson/exercise for a selected feature or concept |
 
-These are proposed routes, not available endpoints. Source access uses stored snapshot/file identities; never accept arbitrary filesystem paths or arbitrary fetch URLs from the browser.
+The explorer currently implements `GET/POST /api/repositories`, `GET/DELETE /api/snapshots/:id`, and `GET /api/snapshots/:id/files?file=<fileId>`. The import endpoint returns newline-delimited JSON progress/completion/error events. Source and snapshot responses are not HTTP-cached. Analysis, question, and lesson routes remain proposed. Source access uses stored snapshot/file identities; never accept arbitrary filesystem paths or arbitrary fetch URLs from the browser.
 
 ### Analysis lifecycle
 
@@ -551,21 +630,21 @@ User identity, GitHub App installation, and permission to read a particular priv
 
 ## Implementation roadmap
 
-Every milestone below is **planned**. Mark work complete only after implementation and relevant verification.
+Milestone 1 is implemented. Later milestones remain **planned**. Mark new work complete only after implementation and relevant verification; distinguish fixture-backed checks from live-service verification.
 
 ### Milestone 0 — Project contract
 
 - [x] Write the product, analysis, and teaching specification.
 - [x] Add a Gemini CLI development entry point.
-- [ ] Select a small public TypeScript/Next.js repository as the first real example.
+- [x] Validate a public TypeScript/Next.js example through a live import and source download (`shadcn-ui/taxonomy`, used as an archived ingestion example only).
 
 ### Milestone 1 — Repository explorer
 
-- [ ] Scaffold Next.js, TypeScript, styling, and local persistence.
-- [ ] Build a repository URL form with truthful loading/error states.
-- [ ] Resolve a commit and fetch a bounded source manifest.
-- [ ] Implement filtering and coverage reporting.
-- [ ] Display a file tree and source viewer with stable line references.
+- [x] Scaffold Next.js, TypeScript, styling, and local persistence.
+- [x] Build a repository URL form with truthful loading/error states.
+- [x] Resolve a commit and fetch a bounded source manifest.
+- [x] Implement filtering and coverage reporting.
+- [x] Display a file tree and source viewer with stable line references.
 
 **Done when:** a real supported public repository opens at one immutable commit, source is readable, and skipped/failed files are visible. No AI dependency is required yet.
 
@@ -647,15 +726,15 @@ Mock provider responses for repeatable contract tests. Run a limited real-provid
 
 ### Current repository state
 
-This repository currently contains this specification and its Gemini CLI entry point. There is no package manifest, application source, installed project dependency set, API integration, or runnable development server yet.
+The Milestone 1 explorer, package manifest and lockfile, local environment example, application source, GitHub REST client, SQLite store, unit/service tests, and browser scenarios are implemented. Actual setup commands are listed at the top of this README. There is no Gemini integration, structural parser, architecture graph, feature tracing, lesson generation, or account connection yet.
 
-Do not present `npm install`, `npm run dev`, or other setup commands as working project instructions until the corresponding scaffold and scripts exist. Update this section when they do.
+Preserve the working explorer when implementing later milestones. Keep model-facing source evidence separate from trusted policy, and do not relabel imported or cached source as analyzed before structural analysis exists.
 
 ### Instructions for the next implementation session
 
 1. Inspect the repository and current changes before editing.
 2. Read this README and any applicable developer instructions.
-3. Implement Milestone 1 in a small, complete vertical slice.
+3. Implement Milestone 2 in a small, complete vertical slice, preserving Milestone 1 behavior.
 4. Keep the data source real. Clearly label any temporary fixtures or demo data.
 5. Keep source retrieval, analysis, AI, and rendering behind explicit interfaces.
 6. Add meaningful checks for ingestion and source references as those features appear.
@@ -666,7 +745,7 @@ Proceed with the documented defaults for reversible implementation decisions. As
 
 ### Useful development prompts
 
-> Read README.md. Implement Milestone 1: a real public GitHub repository explorer with immutable snapshots, bounded ingestion, coverage reporting, and a source viewer. Explain the architecture briefly as you build, and update the README to match the implemented state.
+> Read README.md. Inspect the working explorer, then implement Milestone 2: deterministic TypeScript imports, symbols, supported Next.js entry points, and a source-linked structural map. Keep unresolved relationships visible. Explain the architecture briefly as you build, and update the README to match the implemented state.
 
 > Read README.md and inspect the current implementation. Trace one supported feature using its actual source. Separate observed relationships, inferred behavior, and unresolved boundaries. Show me the smallest useful diagram and a reading order.
 

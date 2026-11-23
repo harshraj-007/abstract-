@@ -1,0 +1,12 @@
+.next/
+.abstract/
+node_modules/
+test-results/
+playwright-report/
+coverage/
+package-lock.json
+next-env.d.ts
+README.md
+GEMINI.md
+AGENTS.md
+CLAUDE.md
