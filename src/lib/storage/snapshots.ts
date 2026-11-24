@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+import type { StructuralAnalysis } from "@/lib/contracts/analysis";
 import type {
   RepositorySnapshot,
   SnapshotSummary,
@@ -29,6 +30,10 @@ export class SnapshotStore {
         file_id TEXT NOT NULL,
         document TEXT NOT NULL,
         PRIMARY KEY (snapshot_id, file_id)
+      );
+      CREATE TABLE IF NOT EXISTS structural_analyses (
+        snapshot_id TEXT PRIMARY KEY REFERENCES snapshots(id) ON DELETE CASCADE,
+        document TEXT NOT NULL
       );
     `);
   }
@@ -62,6 +67,26 @@ export class SnapshotStore {
       .prepare("SELECT document FROM source_files WHERE snapshot_id = ? AND file_id = ?")
       .get(snapshotId, fileId) as { document: string } | undefined;
     return row ? (JSON.parse(row.document) as SourceFile) : null;
+  }
+
+  allSources(snapshotId: string): SourceFile[] {
+    const rows = this.db
+      .prepare("SELECT document FROM source_files WHERE snapshot_id = ? ORDER BY file_id")
+      .all(snapshotId) as { document: string }[];
+    return rows.map((row) => JSON.parse(row.document) as SourceFile);
+  }
+
+  getAnalysis(snapshotId: string): StructuralAnalysis | null {
+    const row = this.db
+      .prepare("SELECT document FROM structural_analyses WHERE snapshot_id = ?")
+      .get(snapshotId) as { document: string } | undefined;
+    return row ? (JSON.parse(row.document) as StructuralAnalysis) : null;
+  }
+
+  saveAnalysis(analysis: StructuralAnalysis) {
+    this.db
+      .prepare("INSERT OR REPLACE INTO structural_analyses (snapshot_id, document) VALUES (?, ?)")
+      .run(analysis.snapshotId, JSON.stringify(analysis));
   }
 
   updateEntry(

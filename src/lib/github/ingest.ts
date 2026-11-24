@@ -79,7 +79,7 @@ export async function ingestRepository(
       "No readable files were selected. Inspect the coverage list for exclusion reasons.",
     );
   limitations.push(
-    "Source is downloaded and checked when opened. Architecture analysis and AI explanations are not available yet.",
+    "Source is downloaded and checked when opened. Structural maps are built separately and can be partial. AI explanations are not integrated yet.",
   );
 
   const snapshot: RepositorySnapshot = {

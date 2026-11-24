@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { SnapshotStore } from "../../src/lib/storage/snapshots";
 import { fixtureSnapshot, FIXTURE_SOURCES, SNAPSHOT_ID, COMMIT } from "../helpers/fixtures";
 import { sourceLines } from "../../src/lib/contracts/repository";
+import { analysisFixture, LEARNING_REPO } from "../helpers/analysis-fixtures";
 
 test.beforeEach(() => {
   // Explicit test data lives in an isolated database, never in the normal workspace.
@@ -34,7 +35,7 @@ test("home is readable, responsive, and honest about upcoming features", async (
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Every codebase has a story." })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "GitHub repository URL" })).toBeVisible();
-  await expect(page.getByText("AVAILABLE NOW", { exact: true })).toBeVisible();
+  await expect(page.getByText("AVAILABLE NOW", { exact: true })).toHaveCount(2);
   await page.getByText("How it works", { exact: true }).click();
   await expect(page.getByText(/Nothing from the repository is executed/)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
@@ -126,4 +127,40 @@ test("deletes a snapshot and its source through the local API", async ({ page })
   await expect(page.getByRole("heading", { name: "Every codebase has a story." })).toBeVisible();
   const response = await page.request.get(`/api/snapshots/${SNAPSHOT_ID}`);
   expect(response.status()).toBe(404);
+});
+
+test("builds a real cached-source map and opens graph and entry-point evidence", async ({
+  page,
+}, testInfo) => {
+  const { snapshot, sources } = analysisFixture(LEARNING_REPO);
+  const store = new SnapshotStore(path.join(process.env.ABSTRACT_DATA_DIR!, "abstract.sqlite"));
+  store.deleteSnapshot(snapshot.id);
+  store.saveSnapshot(snapshot);
+  for (const source of sources) store.saveSource(source);
+  store.close();
+  await page.goto(`/?snapshot=${snapshot.id}`);
+  await page.getByRole("tab", { name: "Architecture map", exact: true }).click();
+  await page.getByRole("button", { name: "Use downloaded source", exact: true }).click();
+  await expect(page.getByText("8 source files parsed", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /^src\/app\/page\.tsx/ }).click();
+  await expect(
+    page.getByRole("group", { name: "Source dependency map for src/app/page.tsx", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Open src/components/widget.tsx at line 1", exact: true })
+    .click();
+  await expect(page.getByRole("region", { name: "Source viewer" })).toContainText('"use client"');
+  await expect(page).toHaveURL(/#L1$/);
+  await page.getByRole("tab", { name: "Architecture map", exact: true }).click();
+  await page.getByRole("tab", { name: /^Entry points/ }).click();
+  const entries = page.getByRole("tabpanel", { name: /^Entry points/ });
+  await expect(entries).toContainText("/users/[id]");
+  await entries.getByRole("button", { name: /^src\/app\/api\/users\/route\.ts/ }).click();
+  await expect(page).toHaveURL(/#L2$/);
+  await expect(page.getByRole("region", { name: "Source viewer" })).toContainText(
+    "export async function GET",
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole("tab", { name: "Architecture map", exact: true }).click();
+  await page.screenshot({ path: testInfo.outputPath("architecture.png"), fullPage: true });
 });

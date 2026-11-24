@@ -6,7 +6,7 @@ Abstract is a local repository explorer being built into a source-linked learnin
 
 The goal is to help a learner explain how a project works, locate the code responsible for a behavior, and implement a related change independently.
 
-> **Current status:** the Milestone 1 repository explorer is implemented. It includes a Next.js interface, public GitHub ingestion, immutable snapshots, source filtering, an on-demand source viewer, coverage reporting, and local SQLite persistence. Architecture analysis, diagrams, Gemini, lessons, and GitHub account connection remain planned. The specification below distinguishes the implemented explorer from the intended full product.
+> **Current status:** Milestones 1 and 2 are implemented: public GitHub exploration, commit-pinned source browsing, local SQLite persistence, and a source-linked structural map for JavaScript/TypeScript. The map shows imports, declarations, folder groups, and supported Next.js App Router entry points. Gemini explanations, feature walkthroughs, lessons, and GitHub account connection remain planned. The specification below distinguishes current behavior from the intended full product.
 
 ## Contents
 
@@ -74,12 +74,30 @@ This application is not ready for an unauthenticated public deployment. Multi-us
 - On-demand UTF-8 source downloads, SHA-256 content hashes, line selection, line jumps, copying, and immutable GitHub links.
 - Searchable file tree, snapshot overview, searchable/filterable coverage table, and per-file exclusion/failure reasons.
 - Local recent snapshots, restoration through URL parameters, and removal of a snapshot and its cached source.
+- Source-linked dependency diagrams, searchable declarations, and supported Next.js App Router pages, layouts, and route exports.
+- Cached-source map builds, optional batches of up to 20 new source/configuration files, cancellation, and persisted analysis with stale-source detection.
 - Responsive desktop/mobile layouts and keyboard navigation for repository-view tabs.
 - No imported repository is executed, and no source is sent to an AI provider.
 
-Selection uses file conventions. GitHub's repository language is displayed as reported, while framework detection and source parsing are explicitly unavailable. Lockfiles, generated directories, environment files (including examples), symbolic links, submodules, binaries, and unsupported file types are excluded. Obvious embedded key/token patterns are checked before source is saved; this is a conservative heuristic, not a complete secret scanner.
+Selection uses file conventions. GitHub's repository language is displayed as reported; the structural analyzer separately parses downloaded JavaScript/TypeScript and checks Next.js App Router conventions against the root dependency manifest. Lockfiles, generated directories, environment files (including examples), symbolic links, submodules, binaries, and unsupported file types are excluded. Obvious embedded key/token patterns are checked before source is saved; this is a conservative heuristic, not a complete secret scanner.
 
 The explorer reads a bounded recursive GitHub tree. If GitHub truncates it or the 10,000-entry inspection limit is reached, discovery is labeled partial; undiscovered entries are not counted. Files are downloaded as opened, so “selected” does not mean “downloaded” or “analyzed.”
+
+### Use the architecture map
+
+1. Import a public repository, then open **Architecture map**.
+2. Choose **Use downloaded source** for a build without GitHub requests, or **Read up to 20 & build map** to fetch a bounded batch first. Configuration files count toward that batch.
+3. Choose a mapped file. The diagram shows up to four incoming and four outgoing neighbors; the References panel lists its module references, including external and unresolved ones.
+4. Click a node to open its source, or an arrow label to open the import statement. Entry points and Symbols also link to exact source lines.
+5. Use **Read next 20 files** to expand coverage. If additional source is opened elsewhere, the saved map is marked stale; **Rebuild downloaded source** refreshes it without further downloads.
+
+The analyzer uses the installed TypeScript compiler API on the server. It extracts ESM imports, re-exports, literal/computed dynamic imports, top-level declarations, class methods, and client/server directives. It resolves relative paths, supported root TypeScript/JavaScript aliases, index files, and JavaScript-to-TypeScript extension substitution against the snapshot manifest. Local JSONC configuration inheritance is bounded; imported code, compiler plugins, and JavaScript configuration are never executed. TypeScript is a production dependency because parsing runs at request time.
+
+Folder groups describe paths, not inferred business responsibilities. Arrows describe module references, not function calls, render relationships, HTTP requests, or runtime traces. An unread target may be resolved by its manifest path without having its implementation indexed. Syntax failures, computed imports, unavailable configuration, CommonJS dependencies, and unresolved references remain visible. Declarations do not establish the runtime implementation of a package.
+
+Next.js support currently covers a root `app/` or `src/app/`, default page/layout exports, named HTTP route exports, route groups, and dynamic segments. Pages Router, monorepo app discovery, parallel/intercepted routes, and custom `pageExtensions` are not interpreted. Exported HTTP names do not prove an endpoint works. Package-based configuration inheritance and runtime alias transformations also remain unsupported.
+
+Structural reports are stored beside snapshots with an analyzer version and evidence fingerprint. Identical evidence reuses the saved result; deleting a snapshot also deletes its map. A partial map is useful indexed evidence with explicit gaps, not a claim that the entire repository is understood.
 
 ### Checks
 
@@ -90,7 +108,7 @@ npm test
 npm run test:e2e
 ```
 
-The browser suite builds the app, starts an isolated production-mode server on port 3100, and uses a separate `.abstract/browser-tests` database. It covers desktop/mobile layouts, source navigation, coverage, local request validation, streamed UI import, and snapshot removal. Install Playwright's Chromium browser if it is not already installed:
+The browser suite builds the app, starts an isolated production-mode server on port 3100, and uses a separate `.abstract/browser-tests` database. It covers desktop/mobile layouts, source navigation, coverage, local request validation, streamed UI import, structural-map navigation, and snapshot removal. Install Playwright's Chromium browser if it is not already installed:
 
 ```bash
 npx playwright install chromium
@@ -100,12 +118,13 @@ Unit/service checks use explicit GitHub response fixtures, including SHA verific
 
 ### Verification for this iteration
 
-- 59 unit/service checks pass, including URL boundaries, limits, Git object verification, source exclusions, retries, and persistent storage.
+- 93 unit/service checks pass, covering the explorer plus aliases, re-exports, dynamic imports, exact source locations, syntax errors, unread targets, Next.js entry points, bounded fetching, cancellation, persistence, and stale-analysis detection.
 - Type checking, ESLint, formatting checks, and the production build pass.
 - Manual in-app browser checks verified URL validation, live public import, nested source selection, repeated file selection, line links, restoration after reload, coverage filters, excluded-source handling, and mobile layout/navigation.
 - Live GitHub smoke checks used `octocat/Hello-World` and `shadcn-ui/taxonomy`. At tested commit `298a8857c7128a0d121e7f699dfd729f23b3966d`, Taxonomy produced 188 discovered files, 161 selected files, and 27 skipped files. README and a TypeScript login page were downloaded and verified. These are example results, not counts promised for future commits.
 - Taxonomy's README marks that repository as archived with outdated framework patterns. It is an ingestion/source-browsing smoke example, not a recommended current application template.
-- The standalone Playwright suite could not execute browser assertions in this session because the environment denied Chromium process startup. It remains available for running outside that restriction. Manual browser checks are not a claim that the full automated browser suite passed.
+- A live map of `harshraj-007/abstract-` at commit `b1fe2dc1a5c5d797808f0893deb62416d2ee3485` indexed 18 of 27 source files after the first 20-file batch (two configuration files included), with 35 internal references, 79 declarations, and 5 entry points. Manual checks verified import-line and route-export navigation, symbol search, saved-map restoration, keyboard detail tabs, and a 390px mobile viewport without document overflow. These counts describe that tested snapshot, not the current workspace or future commits.
+- The standalone Playwright suite was blocked by Chromium process-startup restrictions in the previous iteration and was not rerun this iteration. New browser scenarios are included for structural navigation. Manual browser checks are not a claim that the full automated browser suite passed.
 
 ## Product goals
 
@@ -135,7 +154,7 @@ Success is observable: after a lesson, the learner can trace a feature, predict 
 | Framework specialization | Next.js App Router first |
 | Analysis depth | Project overview plus on-demand module and feature analysis |
 | AI provider | Gemini, using an eligible model available to the developer's account |
-| Diagrams | Source-linked Mermaid diagrams |
+| Diagrams | Source-linked SVG dependency map now; additional Mermaid diagrams planned |
 | Chat | Questions answered from retrieved repository evidence |
 | Learning | Concept explanations, prediction questions, and small exercises |
 | Storage | SQLite for a local, single-process prototype |
@@ -197,12 +216,12 @@ An AI failure must not remove a successfully fetched file tree or previously val
 | --- | --- | --- |
 | Application | Next.js App Router + TypeScript | Pages, server endpoints, and source browsing |
 | Styling | Tailwind CSS | Responsive interface and consistent visual tokens |
-| GitHub client | Octokit or a small typed REST client | Repository metadata, trees, and source retrieval |
-| Code structure | ts-morph | Syntax trees, symbols, imports, and resolvable references |
+| GitHub client | Implemented typed REST client using native fetch | Repository metadata, trees, and source retrieval |
+| Code structure | TypeScript compiler API, implemented | Syntax trees, declaration locations, imports, and manifest-only module resolution |
 | Framework knowledge | Explicit Next.js adapter | Route conventions and supported framework relationships |
-| AI | Official `@google/genai` SDK behind a provider interface | Explanations and structured analysis proposals |
-| Validation | Zod | Request, model-response, and persisted-output validation |
-| Diagrams | Mermaid | Rendering graphs from validated graph data |
+| AI | Planned official `@google/genai` SDK behind a provider interface | Explanations and structured analysis proposals |
+| Validation | Zod for current request/GitHub contracts; model validation planned | Boundary validation |
+| Diagrams | Implemented application-owned React SVG; Mermaid planned for further views | Render deterministic graphs with source navigation |
 | Persistence | SQLite through a small repository layer | Snapshots, indexes, reports, and progress |
 | Verification | Vitest; browser checks when the UI exists | Deterministic analysis and meaningful interface behavior |
 
@@ -211,6 +230,23 @@ Use one application and one language initially. Keep repository fetching, parsin
 SQLite assumes persistent local disk. Revisit storage and use a durable job worker before deploying a multi-user application on infrastructure with ephemeral filesystems or short request lifetimes.
 
 ## System architecture
+
+The current implementation uses this path:
+
+```mermaid
+flowchart TD
+    UI["Repository workspace"] --> API["Local server endpoints"]
+    API --> FETCH["Commit-pinned GitHub reads"]
+    FETCH --> STORE["SQLite snapshots and source"]
+    API --> STRUCTURE["TypeScript parser and resolver"]
+    STORE --> STRUCTURE
+    STRUCTURE --> MAP["Versioned structural report"]
+    MAP --> STORE
+    MAP --> VIEW["Source-linked SVG and indexes"]
+    VIEW --> UI
+```
+
+The complete planned system adds bounded retrieval and Gemini:
 
 ```mermaid
 flowchart TD
@@ -234,7 +270,7 @@ Feature traces based only on source analysis must be labeled as static traces. T
 
 ### Proposed source organization
 
-The explorer's implemented modules are in `src/app/`, `src/components/workspace/`, `src/lib/github/`, `src/lib/contracts/`, and `src/lib/storage/`. Tests are in `tests/`, with explicit fixtures in `tests/helpers/fixtures.ts`. The remaining paths below are planned for later milestones.
+Implemented modules are in `src/app/`, `src/components/workspace/`, `src/lib/github/`, `src/lib/analysis/`, `src/lib/contracts/`, and `src/lib/storage/`. The structural engine separates parsing, configuration, resolution, Next.js rules, graph assembly, and orchestration. Tests and source fixtures are in `tests/` and `tests/helpers/`. Retrieval, AI, and durable jobs below remain planned; Next.js rules currently live in `src/lib/analysis/nextjs.ts`.
 
 | Path | Responsibility |
 | --- | --- |
@@ -248,7 +284,7 @@ The explorer's implemented modules are in `src/app/`, `src/components/workspace/
 | `src/lib/contracts/` | Shared runtime schemas and domain types |
 | `src/lib/storage/` | Persistence, migrations, and cache lookup |
 | `src/lib/jobs/` | Analysis stages, cancellation, and retries |
-| `tests/fixtures/` | Small source repositories with known behavior |
+| `tests/helpers/` | Explicit GitHub fixtures and small source repositories with known behavior |
 
 ## Repository analysis pipeline
 
@@ -589,7 +625,9 @@ Graph outputs additionally need node IDs, node types, typed edges, evidence IDs,
 | `POST /api/questions` | Answer a question using evidence from one snapshot |
 | `POST /api/lessons` | Generate a lesson/exercise for a selected feature or concept |
 
-The explorer currently implements `GET/POST /api/repositories`, `GET/DELETE /api/snapshots/:id`, and `GET /api/snapshots/:id/files?file=<fileId>`. The import endpoint returns newline-delimited JSON progress/completion/error events. Source and snapshot responses are not HTTP-cached. Analysis, question, and lesson routes remain proposed. Source access uses stored snapshot/file identities; never accept arbitrary filesystem paths or arbitrary fetch URLs from the browser.
+The explorer implements `GET/POST /api/repositories`, `GET/DELETE /api/snapshots/:id`, and `GET /api/snapshots/:id/files?file=<fileId>`. Structural analysis implements `GET /api/snapshots/:id/analysis` (saved report, snapshot, stale flag) and `POST /api/snapshots/:id/analysis` with a strict `{ "fetchMissing": boolean }` body. POST streams newline-delimited `progress`, `complete`, and `error` events; `fetchMissing: false` uses cached source, while `true` attempts up to 20 new files. Only one map build per snapshot and two overall run concurrently in this local process. Disconnecting cancels the task and preserves downloaded source and any previous report.
+
+The import endpoint also streams newline-delimited events. Source, snapshot, and analysis responses are not HTTP-cached. The general `/api/analyses` routes, AI questions, and lessons remain proposed. Source access uses stored snapshot/file identities; never accept arbitrary filesystem paths or arbitrary fetch URLs from the browser.
 
 ### Analysis lifecycle
 
@@ -630,7 +668,7 @@ User identity, GitHub App installation, and permission to read a particular priv
 
 ## Implementation roadmap
 
-Milestone 1 is implemented. Later milestones remain **planned**. Mark new work complete only after implementation and relevant verification; distinguish fixture-backed checks from live-service verification.
+Milestones 1 and 2 are implemented. Milestone 3 onward remains **planned**. Mark new work complete only after implementation and relevant verification; distinguish fixture-backed checks from live-service verification.
 
 ### Milestone 0 — Project contract
 
@@ -650,10 +688,10 @@ Milestone 1 is implemented. Later milestones remain **planned**. Mark new work c
 
 ### Milestone 2 — Structural map
 
-- [ ] Extract imports, symbols, and supported Next.js entry points.
-- [ ] Record unresolved references and parser limitations.
-- [ ] Produce a deterministic dependency graph and compact module view.
-- [ ] Connect graph selection to the correct source location.
+- [x] Extract imports, symbols, and supported Next.js entry points.
+- [x] Record unresolved references and parser limitations.
+- [x] Produce a deterministic dependency graph and compact folder view.
+- [x] Connect graph selection to the correct source location.
 
 **Done when:** known fixture relationships match the output, unsupported patterns are reported, and graph links resolve to the right code.
 
@@ -726,15 +764,15 @@ Mock provider responses for repeatable contract tests. Run a limited real-provid
 
 ### Current repository state
 
-The Milestone 1 explorer, package manifest and lockfile, local environment example, application source, GitHub REST client, SQLite store, unit/service tests, and browser scenarios are implemented. Actual setup commands are listed at the top of this README. There is no Gemini integration, structural parser, architecture graph, feature tracing, lesson generation, or account connection yet.
+The explorer and structural map are implemented, including the TypeScript parser/resolver, supported Next.js entry points, source-linked SVG, declaration browser, persisted reports, bounded retrieval, and coverage/stale states. Actual setup commands are listed at the top of this README. Gemini integration, feature tracing, lesson generation, and account connection remain unimplemented.
 
-Preserve the working explorer when implementing later milestones. Keep model-facing source evidence separate from trusted policy, and do not relabel imported or cached source as analyzed before structural analysis exists.
+Preserve the explorer and deterministic structural map when implementing later milestones. Keep model-facing source evidence separate from trusted policy, and preserve distinctions between discovered, downloaded, parsed, and AI-supplied evidence.
 
 ### Instructions for the next implementation session
 
 1. Inspect the repository and current changes before editing.
 2. Read this README and any applicable developer instructions.
-3. Implement Milestone 2 in a small, complete vertical slice, preserving Milestone 1 behavior.
+3. Implement Milestone 3 in a small, complete vertical slice: bounded evidence packing, trusted tutor policy, Gemini provider, validated source references, and a saved overview. Preserve the explorer and structural map.
 4. Keep the data source real. Clearly label any temporary fixtures or demo data.
 5. Keep source retrieval, analysis, AI, and rendering behind explicit interfaces.
 6. Add meaningful checks for ingestion and source references as those features appear.
@@ -745,7 +783,7 @@ Proceed with the documented defaults for reversible implementation decisions. As
 
 ### Useful development prompts
 
-> Read README.md. Inspect the working explorer, then implement Milestone 2: deterministic TypeScript imports, symbols, supported Next.js entry points, and a source-linked structural map. Keep unresolved relationships visible. Explain the architecture briefly as you build, and update the README to match the implemented state.
+> Read README.md. Inspect the explorer and structural index, then implement Milestone 3: a grounded Gemini overview using bounded source excerpts and known evidence IDs. Reject fabricated references, cache versioned results, and handle missing configuration and quotas without losing the map. Explain the architecture briefly as you build, and update the README to match the implemented state.
 
 > Read README.md and inspect the current implementation. Trace one supported feature using its actual source. Separate observed relationships, inferred behavior, and unresolved boundaries. Show me the smallest useful diagram and a reading order.
 
@@ -761,5 +799,5 @@ Provider interfaces, pricing, model availability, and platform rules can change.
 - [Gemini pricing and data-use distinctions](https://ai.google.dev/gemini-api/docs/pricing)
 - [Gemini rate limits](https://ai.google.dev/gemini-api/docs/rate-limits)
 - [GitHub App design and permissions](https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/deciding-when-to-build-a-github-app)
-- [ts-morph import inspection](https://ts-morph.com/details/imports)
+- [TypeScript compiler API](https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API)
 - [Mermaid documentation](https://mermaid.js.org/intro/)

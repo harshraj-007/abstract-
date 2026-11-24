@@ -25,6 +25,7 @@ import {
   ListFilter,
   LoaderCircle,
   LockKeyhole,
+  Network,
   Menu,
   Plus,
   Search,
@@ -46,6 +47,7 @@ import {
 } from "@/lib/contracts/repository";
 import { FileTree } from "./file-tree";
 import { formatBytes, SourceViewer } from "./source-viewer";
+import { ArchitectureMap } from "./architecture-map";
 
 const STEPS: { stage: ProgressStage; label: string }[] = [
   { stage: "resolving", label: "Resolve commit" },
@@ -53,7 +55,7 @@ const STEPS: { stage: ProgressStage; label: string }[] = [
   { stage: "indexing", label: "Select source" },
   { stage: "saving", label: "Save snapshot" },
 ];
-type View = "files" | "overview" | "coverage";
+type View = "files" | "map" | "overview" | "coverage";
 
 function Logo() {
   return (
@@ -312,21 +314,22 @@ export function Explorer() {
     updateLocation(null);
   }
 
-  function chooseFile(file: SourceEntry, preserveQuery = false) {
+  function chooseFile(file: SourceEntry, preserveQuery = false, line?: number) {
     if (!snapshot) return;
     setView("files");
     if (!preserveQuery) setQuery("");
     if (file.id === selectedId) {
       if (sourceError) setRetry((value) => value + 1);
-      updateLocation(snapshot, file, selectedLine ?? undefined);
+      if (line !== undefined) setSelectedLine(line);
+      updateLocation(snapshot, file, line ?? selectedLine ?? undefined);
       return;
     }
     setSelectedId(file.id);
-    setSelectedLine(null);
+    setSelectedLine(line ?? null);
     setSourceError(null);
     setSource(null);
     setSourceLoading(file.status !== "skipped");
-    updateLocation(snapshot, file);
+    updateLocation(snapshot, file, line);
   }
 
   async function forgetSnapshot() {
@@ -588,22 +591,22 @@ export function Explorer() {
                     </div>
                     <span className="journey-number">01</span>
                   </article>
-                  <article className="journey-card future-card">
+                  <article className="journey-card">
                     <div className="journey-card-top">
                       <Box size={20} />
-                      <span className="coming-label">COMING NEXT</span>
+                      <span className="available-label">AVAILABLE NOW</span>
                     </div>
                     <h3>See the bigger picture.</h3>
                     <p>
-                      Connect the modules, trace a feature, and understand how the pieces fit
-                      together.
+                      Follow project imports, find declarations, and inspect source-linked entry
+                      points.
                     </p>
                     <div className="card-miniature map-miniature" aria-hidden="true">
-                      <span>Interface</span>
+                      <span>Source</span>
                       <i />
-                      <span>Server</span>
+                      <span>Imports</span>
                       <i />
-                      <span>Data</span>
+                      <span>Symbols</span>
                     </div>
                     <span className="journey-number">02</span>
                   </article>
@@ -723,6 +726,7 @@ export function Explorer() {
                 {(
                   [
                     { id: "files", title: "Source explorer", icon: Code2 },
+                    { id: "map", title: "Architecture map", icon: Network },
                     { id: "overview", title: "Snapshot overview", icon: LayoutGrid },
                     { id: "coverage", title: "Coverage", icon: ListFilter },
                   ] as const
@@ -737,9 +741,13 @@ export function Explorer() {
                     onKeyDown={(event) => {
                       if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
                         event.preventDefault();
-                        const tabs: View[] = ["files", "overview", "coverage"];
+                        const tabs: View[] = ["files", "map", "overview", "coverage"];
                         const next =
-                          tabs[(tabs.indexOf(view) + (event.key === "ArrowRight" ? 1 : 2)) % 3];
+                          tabs[
+                            (tabs.indexOf(view) +
+                              (event.key === "ArrowRight" ? 1 : tabs.length - 1)) %
+                              tabs.length
+                          ];
                         setView(next);
                         document.getElementById(`tab-${next}`)?.focus();
                       }
@@ -811,6 +819,22 @@ export function Explorer() {
                   />
                 </div>
               )}
+              {view === "map" && (
+                <div id="panel-map" role="tabpanel" aria-labelledby="tab-map">
+                  <ArchitectureMap
+                    key={snapshot.id}
+                    snapshot={snapshot}
+                    selectedFileId={selectedId}
+                    onOpenFile={(fileId, line) => {
+                      const file = snapshot.files.find((entry) => entry.id === fileId);
+                      if (file) chooseFile(file, false, line);
+                    }}
+                    onSnapshotUpdated={(next) =>
+                      setSnapshot((current) => (current?.id === next.id ? next : current))
+                    }
+                  />
+                </div>
+              )}
               {view === "overview" && (
                 <div id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
                   <Overview
@@ -818,6 +842,7 @@ export function Explorer() {
                     onChoose={chooseFile}
                     onForget={forgetSnapshot}
                     deleting={deleting}
+                    onMap={() => setView("map")}
                   />
                 </div>
               )}
@@ -829,7 +854,8 @@ export function Explorer() {
               <div className="workspace-footnote">
                 <ShieldCheck size={13} />
                 <span>
-                  Source explorer only. No architecture or AI analysis has been performed.
+                  Static source relationships describe dependencies, not runtime calls. AI tutoring
+                  is a later step.
                 </span>
                 <span>
                   {!snapshot.discoveryComplete
@@ -961,11 +987,13 @@ function Overview({
   onChoose,
   onForget,
   deleting,
+  onMap,
 }: {
   snapshot: RepositorySnapshot;
   onChoose: (file: SourceEntry) => void;
   onForget: () => void;
   deleting: boolean;
+  onMap: () => void;
 }) {
   const starters = snapshot.files.filter((file) => file.status !== "skipped").slice(0, 5);
   return (
@@ -1004,7 +1032,12 @@ function Overview({
             </div>
             <div>
               <dt>Framework</dt>
-              <dd>Not analyzed yet</dd>
+              <dd>
+                <button type="button" className="text-button" onClick={onMap}>
+                  Inspect architecture map
+                  <ArrowUpRight size={12} />
+                </button>
+              </dd>
             </div>
             <div>
               <dt>Branch when opened</dt>
@@ -1050,9 +1083,15 @@ function Limitations({ snapshot }: { snapshot: RepositorySnapshot }) {
       <div>
         <h3>What this snapshot covers</h3>
         <ul>
-          {snapshot.limitations.map((limitation) => (
-            <li key={limitation}>{limitation}</li>
-          ))}
+          <li>
+            Files download on demand. Structural map coverage is reported separately in the
+            Architecture map tab.
+          </li>
+          {snapshot.limitations
+            .filter((limitation) => !limitation.startsWith("Source is downloaded"))
+            .map((limitation) => (
+              <li key={limitation}>{limitation}</li>
+            ))}
         </ul>
       </div>
     </section>
