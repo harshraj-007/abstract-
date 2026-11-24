@@ -2,6 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { StructuralAnalysis } from "@/lib/contracts/analysis";
+import type { OverviewReport } from "@/lib/contracts/overview";
+import type { QuestionReport, QuestionSummary } from "@/lib/contracts/questions";
 import type {
   RepositorySnapshot,
   SnapshotSummary,
@@ -34,6 +36,22 @@ export class SnapshotStore {
       CREATE TABLE IF NOT EXISTS structural_analyses (
         snapshot_id TEXT PRIMARY KEY REFERENCES snapshots(id) ON DELETE CASCADE,
         document TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS overview_reports (
+        id TEXT PRIMARY KEY,
+        snapshot_id TEXT NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+        cache_key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        document TEXT NOT NULL,
+        UNIQUE(snapshot_id, cache_key)
+      );
+      CREATE TABLE IF NOT EXISTS question_answers (
+        id TEXT PRIMARY KEY,
+        snapshot_id TEXT NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+        cache_key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        document TEXT NOT NULL,
+        UNIQUE(snapshot_id,cache_key)
       );
     `);
   }
@@ -89,6 +107,37 @@ export class SnapshotStore {
       .run(analysis.snapshotId, JSON.stringify(analysis));
   }
 
+  getOverview(snapshotId: string, cacheKey?: string): OverviewReport | null {
+    const row = (
+      cacheKey
+        ? this.db
+            .prepare(
+              "SELECT document FROM overview_reports WHERE snapshot_id = ? AND cache_key = ?",
+            )
+            .get(snapshotId, cacheKey)
+        : this.db
+            .prepare(
+              "SELECT document FROM overview_reports WHERE snapshot_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            )
+            .get(snapshotId)
+    ) as { document: string } | undefined;
+    return row ? (JSON.parse(row.document) as OverviewReport) : null;
+  }
+
+  saveOverview(report: OverviewReport) {
+    this.db
+      .prepare(
+        "INSERT OR REPLACE INTO overview_reports (id,snapshot_id,cache_key,created_at,document) VALUES (?,?,?,?,?)",
+      )
+      .run(report.id, report.snapshotId, report.cacheKey, report.createdAt, JSON.stringify(report));
+    // Keep bounded local history per snapshot; a failed generation never reaches this method.
+    this.db
+      .prepare(
+        "DELETE FROM overview_reports WHERE snapshot_id = ? AND id NOT IN (SELECT id FROM overview_reports WHERE snapshot_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 5)",
+      )
+      .run(report.snapshotId, report.snapshotId);
+  }
+
   updateEntry(
     snapshotId: string,
     fileId: string,
@@ -103,6 +152,47 @@ export class SnapshotStore {
       .prepare("UPDATE snapshots SET document = ? WHERE id = ?")
       .run(JSON.stringify(snapshot), snapshotId);
     return snapshot;
+  }
+
+  getQuestion(
+    snapshotId: string,
+    lookup: { id: string } | { cacheKey: string },
+  ): QuestionReport | null {
+    const row = (
+      "id" in lookup
+        ? this.db
+            .prepare("SELECT document FROM question_answers WHERE snapshot_id = ? AND id = ?")
+            .get(snapshotId, lookup.id)
+        : this.db
+            .prepare(
+              "SELECT document FROM question_answers WHERE snapshot_id = ? AND cache_key = ?",
+            )
+            .get(snapshotId, lookup.cacheKey)
+    ) as { document: string } | undefined;
+    return row ? (JSON.parse(row.document) as QuestionReport) : null;
+  }
+  recentQuestions(snapshotId: string): QuestionSummary[] {
+    const rows = this.db
+      .prepare(
+        "SELECT document FROM question_answers WHERE snapshot_id = ? ORDER BY created_at DESC,rowid DESC LIMIT 20",
+      )
+      .all(snapshotId) as { document: string }[];
+    return rows.map(({ document }) => {
+      const { id, createdAt, draft, path, model } = JSON.parse(document) as QuestionReport;
+      return { id, createdAt, draft, path, model };
+    });
+  }
+  saveQuestion(report: QuestionReport) {
+    this.db
+      .prepare(
+        "INSERT OR REPLACE INTO question_answers (id,snapshot_id,cache_key,created_at,document) VALUES (?,?,?,?,?)",
+      )
+      .run(report.id, report.snapshotId, report.cacheKey, report.createdAt, JSON.stringify(report));
+    this.db
+      .prepare(
+        "DELETE FROM question_answers WHERE snapshot_id = ? AND id NOT IN (SELECT id FROM question_answers WHERE snapshot_id = ? ORDER BY created_at DESC,rowid DESC LIMIT 20)",
+      )
+      .run(report.snapshotId, report.snapshotId);
   }
 
   saveSource(source: SourceFile) {

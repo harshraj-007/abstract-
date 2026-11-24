@@ -6,7 +6,7 @@ Abstract is a local repository explorer being built into a source-linked learnin
 
 The goal is to help a learner explain how a project works, locate the code responsible for a behavior, and implement a related change independently.
 
-> **Current status:** Milestones 1 and 2 are implemented: public GitHub exploration, commit-pinned source browsing, local SQLite persistence, and a source-linked structural map for JavaScript/TypeScript. The map shows imports, declarations, folder groups, and supported Next.js App Router entry points. Gemini explanations, feature walkthroughs, lessons, and GitHub account connection remain planned. The specification below distinguishes current behavior from the intended full product.
+> **Current status:** the repository explorer, structural map, Gemini overview workflow, and scoped code questions are implemented. Questions support file/line scope, quick/learn/deep explanations, bounded context reads, checked citations, and saved answers. A configured live Gemini attempt encountered timeout and rate-limit/temporary-unavailability errors; successful live generation and output quality remain unverified. Feature walkthroughs, evidence-linked flow diagrams, multi-turn conversation, lessons, and GitHub account connection remain planned.
 
 ## Contents
 
@@ -66,6 +66,8 @@ npm run start
 
 This application is not ready for an unauthenticated public deployment. Multi-user authorization, durable background jobs, and hosting-specific storage are later work.
 
+Keep the terminal running while using the local website. A browser tab can keep displaying the interface after the server exits, but imports and source requests will fail. The interface now identifies browser-level connection failures as an unreachable local Abstract server, while preserving actual server diagnoses such as GitHub quota or repository-access errors. If port 3000 is occupied, run `npm run start -- --port 3001` and open `http://127.0.0.1:3001` instead. Automation-started preview processes may end with their execution session; a normal user-owned terminal is the reliable option for continued use.
+
 ### What works now
 
 - Public repository import with streamed progress and actionable errors.
@@ -76,8 +78,11 @@ This application is not ready for an unauthenticated public deployment. Multi-us
 - Local recent snapshots, restoration through URL parameters, and removal of a snapshot and its cached source.
 - Source-linked dependency diagrams, searchable declarations, and supported Next.js App Router pages, layouts, and route exports.
 - Cached-source map builds, optional batches of up to 20 new source/configuration files, cancellation, and persisted analysis with stale-source detection.
+- Optional Gemini overview: evidence preview, source-linked purpose/stack/modules, architecture explanation, reading order, and general programming concepts.
+- Server-only Gemini configuration, strict response/reference validation, reusable saved overviews, stale detection, and explicit provider/quota errors.
+- Scoped source questions with optional line focus, quick/learn/deep explanation depth, cached evidence previews, explicit context reads of up to four files, and up to 20 saved answers per snapshot.
 - Responsive desktop/mobile layouts and keyboard navigation for repository-view tabs.
-- No imported repository is executed, and no source is sent to an AI provider.
+- No imported repository is executed. Opening source, building a structural map, or previewing/reading question context sends no source to AI. Overview and question generation share previewed excerpts only when explicitly requested.
 
 Selection uses file conventions. GitHub's repository language is displayed as reported; the structural analyzer separately parses downloaded JavaScript/TypeScript and checks Next.js App Router conventions against the root dependency manifest. Lockfiles, generated directories, environment files (including examples), symbolic links, submodules, binaries, and unsupported file types are excluded. Obvious embedded key/token patterns are checked before source is saved; this is a conservative heuristic, not a complete secret scanner.
 
@@ -99,6 +104,44 @@ Next.js support currently covers a root `app/` or `src/app/`, default page/layou
 
 Structural reports are stored beside snapshots with an analyzer version and evidence fingerprint. Identical evidence reuses the saved result; deleting a snapshot also deletes its map. A partial map is useful indexed evidence with explicit gaps, not a claim that the entire repository is understood.
 
+### Connect and use Gemini
+
+Add these variables to the local server's `.env.local`; `.env.example` contains empty placeholders:
+
+```dotenv
+GEMINI_API_KEY=your_server_side_key
+GEMINI_MODEL=your_supported_gemini_model_id
+```
+
+Use an actual model ID available to your account, without a URL or `models/` prefix. Obtain a key from [Google AI Studio](https://aistudio.google.com/apikey), check the model's structured-output support and account limits, then restart `npm run dev` (or restart `npm run start` after building). Do not paste a real key into chat or commit it. Chatbot access does not establish API eligibility, and no model or zero-cost quota is assumed by the app.
+
+1. Build a structural map, then open **AI overview**. If more source has since been downloaded, rebuild the map first.
+2. Expand **Review excerpts to share**. The preview lists exact files, line ranges, excerpt completeness, and the evidence payload's byte size. It requires no provider call or additional GitHub downloads.
+3. Choose **Send excerpts & generate overview**. The server sends the previewed evidence to Google Gemini with the application-owned tutor policy and response schema. A changed evidence fingerprint requires a fresh preview before sharing.
+4. Read the saved explanation and follow its citations into the source. Claim labels distinguish observed, inferred, and unknown interpretations; reference validation cannot establish factual accuracy.
+
+The packer ranks root README/package metadata, supported entry points, and connected code. It supplies at most 12 excerpts, at most 100 lines / 6,000 UTF-8 bytes each, inside a 48,000-byte serialized evidence payload. The full policy/evidence/schema budget is 96,000 bytes; output is capped at 6,000 tokens. Byte limits are not token-count estimates or cost guarantees. Missing/unread/omitted source stays explicit. Cached content is checked against manifest identity, Git SHA-1, SHA-256, line count, and source exclusions before inclusion. Imported context files are not promoted into trusted policy.
+
+The server loads only the marked tutor block in this application's README; missing, duplicate, or reversed markers fail clearly. A typed provider interface uses Gemini's official `v1beta generateContent` REST endpoint through native `fetch`, with system instructions separate from untrusted evidence and JSON-schema output. No new SDK dependency is required. Credentials stay in the request header on the server, never in the browser, request URL, saved report, or public error messages.
+
+Before saving, Zod validates the response shape and bounds. The semantic validator rejects unknown or duplicate evidence IDs, missing references on observed/inferred claims, unsupported reference fields, missing inference/unknown limitations, and invalid reading-order links. Paths, hashes, and line ranges come from the server, not from the model. This is reference validation, not proof that a cited excerpt supports every interpretation. Model output renders as plain React text; it supplies no executable diagram markup.
+
+Successful reports record provider/model identity, prompt/policy versions, evidence and structural fingerprints, generation time, duration, and provider-returned token usage when present. An unchanged request reuses its report without a model call. Up to five cached report versions are retained per snapshot and removed with it. A failed, cancelled, blocked, or truncated generation does not replace the previous report. Saved reports remain readable without an API key.
+
+Calls time out after two minutes, have a 256 KiB response limit, and do not retry automatically. Gemini 3 text overviews use `LOW` thinking effort to reduce latency; older and media models receive no thinking-level override. Effective generation settings participate in the cache identity. A process-wide 30-second minimum interval and provider `Retry-After` cooldown limit new calls; duplicate snapshot generation is rejected, with at most two tasks active overall. These are local, in-memory guards, not production quotas or durable background jobs. Stopping a request does not guarantee provider usage is cancelled. A source change during generation prevents the result from being saved.
+
+### Ask about selected code
+
+1. Open a source file and choose **Ask about this code** in its toolbar, or open the **Ask code** tab. Select a permitted source file, optionally focus a line, and enter a question of up to 1,000 characters.
+2. Choose **Quick**, **Learn**, or **Deep**. Learn connects intuition to implementation; Deep requests relevant failure cases and tradeoffs. Each question is independent: saved answers are not automatically transmitted as conversation history.
+3. Choose **Preview cached context** for a local-only preview. If source is missing, choose **Read context & preview**: it attempts up to four new files, starting with the selected file, then root configuration and resolved direct imports. Repeated reads reuse downloads. This action accesses GitHub but never Gemini.
+4. Review the excerpts and coverage limits, then choose **Send question & excerpts to Gemini**. Editing question, scope, depth, or supplied source requires another preview. The browser cannot choose provider credentials or override the trusted policy.
+5. Read the direct answer, steps, reusable idea and general concepts. Citation buttons open the pinned source; returning to **Ask code** preserves the draft, scope and answer. The sidebar restores up to 20 saved answers per snapshot without generating new output.
+
+Question evidence is verified using the same identity/hash/secret checks as overview evidence. Retrieval prioritizes the selected line or a named top-level declaration, direct dependencies/dependents, and lexical matches among cached files. It is deterministic bounded retrieval, not whole-repository understanding or a runtime trace. It supplies at most eight excerpts, 100 lines / 6,000 UTF-8 bytes each, within a 32,000-byte serialized evidence payload. Total policy/evidence/schema remains capped at 96,000 bytes; output caps are 2,200 / 4,000 / 6,000 tokens for quick / learn / deep. Questions matching obvious credential patterns are rejected locally before source reading or provider access.
+
+Saved answers record question, scope, depth, commit, exact evidence, model, policy/prompt versions, usage, and structural/evidence fingerprints. Cache identity includes these settings. Changing context/model/policy marks saved results stale; failures preserve prior answers. Question and overview generation share the process cooldown and concurrency gate. Context reads use a separate limit of one read per snapshot and two overall; completed downloads survive cancellation. This is local persistence and request-scoped work, not durable jobs or multi-user isolation.
+
 ### Checks
 
 ```bash
@@ -118,13 +161,18 @@ Unit/service checks use explicit GitHub response fixtures, including SHA verific
 
 ### Verification for this iteration
 
-- 93 unit/service checks pass, covering the explorer plus aliases, re-exports, dynamic imports, exact source locations, syntax errors, unread targets, Next.js entry points, bounded fetching, cancellation, persistence, and stale-analysis detection.
+- 174 unit/service/API checks pass, including scoped retrieval budgets, context invalidation, citation validation, bounded additional reads, saved-answer history, cancellation, source changes, and shared cooldowns, alongside the explorer, structural map, overview and browser-error checks.
 - Type checking, ESLint, formatting checks, and the production build pass.
 - Manual in-app browser checks verified URL validation, live public import, nested source selection, repeated file selection, line links, restoration after reload, coverage filters, excluded-source handling, and mobile layout/navigation.
 - Live GitHub smoke checks used `octocat/Hello-World` and `shadcn-ui/taxonomy`. At tested commit `298a8857c7128a0d121e7f699dfd729f23b3966d`, Taxonomy produced 188 discovered files, 161 selected files, and 27 skipped files. README and a TypeScript login page were downloaded and verified. These are example results, not counts promised for future commits.
 - Taxonomy's README marks that repository as archived with outdated framework patterns. It is an ingestion/source-browsing smoke example, not a recommended current application template.
 - A live map of `harshraj-007/abstract-` at commit `b1fe2dc1a5c5d797808f0893deb62416d2ee3485` indexed 18 of 27 source files after the first 20-file batch (two configuration files included), with 35 internal references, 79 declarations, and 5 entry points. Manual checks verified import-line and route-export navigation, symbol search, saved-map restoration, keyboard detail tabs, and a 390px mobile viewport without document overflow. These counts describe that tested snapshot, not the current workspace or future commits.
-- The standalone Playwright suite was blocked by Chromium process-startup restrictions in the previous iteration and was not rerun this iteration. New browser scenarios are included for structural navigation. Manual browser checks are not a claim that the full automated browser suite passed.
+- Manual overview checks on that real saved snapshot verified missing-key/model guidance, a 12-file / approximately 33 KiB evidence preview, disabled generation without configuration, refresh behavior, no browser errors, and a 390px viewport without document overflow. No source was sent to Gemini during these checks. Provider success/error behavior is fixture-backed; a real configured-model generation remains unverified.
+- In a subsequent live check on 25 November 2026, the configured key could read `gemini-3.8-flash` metadata (HTTP 200), which advertised `generateContent`. The first overview request reached the old 60-second timeout. After selecting low thinking and a two-minute timeout, the next request returned the adapter's rate-limit/temporary-unavailability error. No successful model overview was saved, and automatic retries were not enabled. Credential loading and metadata access are verified; successful generation and live output quality remain unverified.
+- A production-server question smoke check on the saved `gdg-da/SBG_Website` snapshot at commit `e46f2e8c38b403fb09e4ddfed5e3089e56516eef` verified an unread-source prerequisite, four successful context requests, and a local preview for `src/app/page.tsx` at line 1 with four excerpts / 15,350 serialized bytes. No source was sent to Gemini and no answer was fabricated. These counts describe that specific question and cache state.
+- The new question UI has a desktop/mobile Playwright fixture test for restoring history, following citations without losing scope, and invalidating an edited preview. It could not run here: Chromium startup was denied by the host's Mach-port permission boundary, and the in-app browser route was unavailable. New-question visual behavior and mobile layout remain unverified; the passing 174 checks are unit/service/API checks.
+- A reported browser `Failed to fetch` occurred while the local server was stopped. A fresh server successfully imported the exact public URL `https://github.com/gdg-da/SBG_Website`: 80 discovered files at commit prefix `e46f2e8`. Snapshot import was verified through the real local API; the preview uses port 3001 because port 3000 is occupied. Error-classification regression checks distinguish local disconnection from GitHub failures.
+- The standalone Playwright suite was blocked by Chromium process-startup restrictions in the previous iteration and was not rerun this iteration. Browser scenarios include structural navigation and a clearly labelled saved-overview fixture with citation navigation. Manual browser checks are not a claim that the full automated browser suite passed.
 
 ## Product goals
 
@@ -219,8 +267,8 @@ An AI failure must not remove a successfully fetched file tree or previously val
 | GitHub client | Implemented typed REST client using native fetch | Repository metadata, trees, and source retrieval |
 | Code structure | TypeScript compiler API, implemented | Syntax trees, declaration locations, imports, and manifest-only module resolution |
 | Framework knowledge | Explicit Next.js adapter | Route conventions and supported framework relationships |
-| AI | Planned official `@google/genai` SDK behind a provider interface | Explanations and structured analysis proposals |
-| Validation | Zod for current request/GitHub contracts; model validation planned | Boundary validation |
+| AI | Implemented typed Gemini REST adapter behind a provider interface | Bounded structured overview generation; explicit server configuration |
+| Validation | Zod plus semantic evidence checks | Requests, GitHub responses, model-output shape, and reference allowlists |
 | Diagrams | Implemented application-owned React SVG; Mermaid planned for further views | Render deterministic graphs with source navigation |
 | Persistence | SQLite through a small repository layer | Snapshots, indexes, reports, and progress |
 | Verification | Vitest; browser checks when the UI exists | Deterministic analysis and meaningful interface behavior |
@@ -246,7 +294,7 @@ flowchart TD
     VIEW --> UI
 ```
 
-The complete planned system adds bounded retrieval and Gemini:
+The overview and scoped-question paths now add bounded retrieval and Gemini; feature walkthroughs and lessons in the complete system remain future work:
 
 ```mermaid
 flowchart TD
@@ -270,7 +318,7 @@ Feature traces based only on source analysis must be labeled as static traces. T
 
 ### Proposed source organization
 
-Implemented modules are in `src/app/`, `src/components/workspace/`, `src/lib/github/`, `src/lib/analysis/`, `src/lib/contracts/`, and `src/lib/storage/`. The structural engine separates parsing, configuration, resolution, Next.js rules, graph assembly, and orchestration. Tests and source fixtures are in `tests/` and `tests/helpers/`. Retrieval, AI, and durable jobs below remain planned; Next.js rules currently live in `src/lib/analysis/nextjs.ts`.
+Implemented modules include `src/app/`, `src/components/workspace/`, `src/lib/github/`, `src/lib/analysis/`, `src/lib/retrieval/`, `src/lib/ai/`, `src/lib/contracts/`, and `src/lib/storage/`. The structural engine separates parsing, configuration, resolution, Next.js rules, graph assembly, and orchestration. Overview and question code separate evidence packing, policy loading, shared provider transport/gating, validation, caching, and rendering. Tests and source fixtures are in `tests/` and `tests/helpers/`. Feature tracing and durable jobs remain planned; Next.js rules currently live in `src/lib/analysis/nextjs.ts`.
 
 | Path | Responsibility |
 | --- | --- |
@@ -450,7 +498,7 @@ Learning progress is not chat length. Track concepts attempted, explanations req
 
 ## Gemini tutor instructions
 
-The following marked block is the canonical runtime tutor policy, version `repo-tutor-v1`. The future server must extract it from this application-owned document, or copy it into a versioned trusted prompt module with a consistency check. The delimiters are exact and should each occur once.
+The following marked block is the canonical runtime tutor policy, version `repo-tutor-v1`. The overview server extracts it from this application-owned document using `src/lib/ai/policy.ts`; imported repository files never provide trusted instructions. The delimiters are exact and should each occur once.
 
 <!-- ABSTRACT_TUTOR_POLICY_START -->
 You are Abstract, a source-grounded repository tutor. Help the learner understand architecture, read code, and build related functionality independently.
@@ -537,7 +585,7 @@ There are three different ways to use this specification:
 
 The root `GEMINI.md` is a development entry point. Imported repositories' context files must never be loaded as trusted development or runtime instructions by the analyzer.
 
-### Planned server integration
+### Implemented overview integration
 
 1. Load the application-owned README or a versioned prompt asset at server startup/build time.
 2. Extract the text between the policy markers; fail clearly if missing or duplicated.
@@ -547,7 +595,7 @@ The root `GEMINI.md` is a development entry point. Imported repositories' contex
 6. Validate the returned structure and evidence references before rendering.
 7. Save output with prompt/model/version metadata and usage information.
 
-This is a contract, not implemented SDK code. Check the official SDK and model documentation when building the adapter; model availability and API interfaces can change.
+The overview and scoped questions implement this flow with a shared typed REST adapter in `src/lib/ai/provider.ts`. Feature walkthrough contracts remain future work. Provider interfaces and account model availability can change; check official documentation when changing the adapter.
 
 ### Environment contract after scaffolding
 
@@ -556,9 +604,9 @@ This is a contract, not implemented SDK code. Check the official SDK and model d
 | `GEMINI_API_KEY` | Server-side Gemini credential | Never |
 | `GEMINI_MODEL` | Explicit supported model available to the account | Model identity can be shown; credential cannot |
 | `GITHUB_TOKEN` | Optional development token for permitted GitHub requests | Never |
-| `DATABASE_URL` | Local SQLite database location initially | Never |
+| `ABSTRACT_DATA_DIR` | Persistent local SQLite directory | Never |
 
-The future `.env.example` must contain placeholders only. Do not prefix secrets with `NEXT_PUBLIC_`, commit `.env` files, log credentials, or place credentials in browser storage.
+The committed `.env.example` contains placeholders only. Do not prefix secrets with `NEXT_PUBLIC_`, commit `.env` files, log credentials, or place credentials in browser storage.
 
 Prefer a supported model eligible for the account's free tier where available. Do not hardcode an assumed free model, fixed quota, or guaranteed zero operating cost.
 
@@ -627,7 +675,11 @@ Graph outputs additionally need node IDs, node types, typed edges, evidence IDs,
 
 The explorer implements `GET/POST /api/repositories`, `GET/DELETE /api/snapshots/:id`, and `GET /api/snapshots/:id/files?file=<fileId>`. Structural analysis implements `GET /api/snapshots/:id/analysis` (saved report, snapshot, stale flag) and `POST /api/snapshots/:id/analysis` with a strict `{ "fetchMissing": boolean }` body. POST streams newline-delimited `progress`, `complete`, and `error` events; `fetchMissing: false` uses cached source, while `true` attempts up to 20 new files. Only one map build per snapshot and two overall run concurrently in this local process. Disconnecting cancels the task and preserves downloaded source and any previous report.
 
-The import endpoint also streams newline-delimited events. Source, snapshot, and analysis responses are not HTTP-cached. The general `/api/analyses` routes, AI questions, and lessons remain proposed. Source access uses stored snapshot/file identities; never accept arbitrary filesystem paths or arbitrary fetch URLs from the browser.
+`GET /api/snapshots/:id/overview` returns the latest matching saved overview (or previous report with stale status), configuration readiness without credentials, prerequisites, and the current evidence preview. `POST /api/snapshots/:id/overview` requires strict JSON `{ "allowSourceSharing": true, "evidenceFingerprint": "<preview SHA-256>" }`; it returns a validated saved report or a typed error, and checks the local request origin. The model, key, policy, schema, and provider host cannot be overridden by the browser. An unchanged cache hit makes no provider request.
+
+`GET /api/snapshots/:id/questions` lists saved answer summaries; `?answer=<answer UUID>` restores one answer with stale status. `POST` accepts strict JSON with `action: "preview" | "read" | "answer"` and a draft `{ question, fileId, line?, depth: "quick" | "learn" | "deep" }`. Answer additionally requires `allowSourceSharing: true` and the preview's `evidenceFingerprint`; preview/read reject those extra fields. Bodies are capped at 8 KiB and origin is checked. Preview uses only verified cached source and computes a transient structural index when needed; read adds up to four new downloads and saves the index; answer calls the provider only after consent and fingerprint validation.
+
+The import endpoint also streams newline-delimited events. Source, snapshot, structural-analysis, overview, and question responses are not HTTP-cached. The general `/api/analyses` routes and lessons remain proposed. Source access uses stored snapshot/file identities; never accept arbitrary filesystem paths or arbitrary fetch URLs from the browser.
 
 ### Analysis lifecycle
 
@@ -668,7 +720,7 @@ User identity, GitHub App installation, and permission to read a particular priv
 
 ## Implementation roadmap
 
-Milestones 1 and 2 are implemented. Milestone 3 onward remains **planned**. Mark new work complete only after implementation and relevant verification; distinguish fixture-backed checks from live-service verification.
+Milestones 1 and 2 and the Milestone 3 workflow are implemented. Milestone 4 has scoped questions, additional retrieval, and explanation-depth controls; feature tracing and its flow diagram remain planned. Successful live Gemini generation is still unverified after configured requests encountered timeout and quota/temporary-unavailability errors. Distinguish fixture-backed checks from live-service verification.
 
 ### Milestone 0 — Project contract
 
@@ -697,11 +749,12 @@ Milestones 1 and 2 are implemented. Milestone 3 onward remains **planned**. Mark
 
 ### Milestone 3 — Grounded AI overview
 
-- [ ] Implement trusted policy loading and the Gemini provider interface.
-- [ ] Add bounded evidence packing and task-specific response schemas.
-- [ ] Validate source references and save versioned reports.
-- [ ] Render purpose, architecture explanation, reading order, and limitations.
-- [ ] Handle missing API keys, invalid output, quota errors, and cache hits.
+- [x] Implement trusted policy loading and the Gemini provider interface.
+- [x] Add bounded evidence packing and task-specific response schemas.
+- [x] Validate source references and save versioned reports.
+- [x] Render purpose, architecture explanation, reading order, and limitations.
+- [x] Handle missing API keys, invalid output, quota errors, and cache hits.
+- [ ] Verify a live configured Gemini model and review its overview against the actual source. This remains a live-service check, not established by fixtures.
 
 **Done when:** a useful source-linked overview is generated, fabricated reference IDs are rejected, and an unchanged repeated analysis can reuse a saved result.
 
@@ -709,8 +762,8 @@ Milestones 1 and 2 are implemented. Milestone 3 onward remains **planned**. Mark
 
 - [ ] Support one real feature traced across a small set of files.
 - [ ] Generate a static sequence/flow diagram with evidence and unknown boundaries.
-- [ ] Add scoped questions and bounded additional retrieval.
-- [ ] Implement quick, learn, and deep-dive response modes.
+- [x] Add scoped questions and bounded additional retrieval.
+- [x] Implement quick, learn, and deep-dive response modes.
 
 **Done when:** a learner can move from a user action to its implementation, ask a related question, and inspect the cited code without losing scope.
 
@@ -764,7 +817,7 @@ Mock provider responses for repeatable contract tests. Run a limited real-provid
 
 ### Current repository state
 
-The explorer and structural map are implemented, including the TypeScript parser/resolver, supported Next.js entry points, source-linked SVG, declaration browser, persisted reports, bounded retrieval, and coverage/stale states. Actual setup commands are listed at the top of this README. Gemini integration, feature tracing, lesson generation, and account connection remain unimplemented.
+The explorer, structural map, Gemini overview workflow, and scoped code questions are implemented, including bounded evidence previews and additional reads, trusted README tutor policy, a typed shared REST provider, semantic reference checks, persisted/versioned reports, cache reuse, and coverage/stale/error states. Actual setup commands are listed at the top. Successful live Gemini generation remains unverified after configured requests encountered timeout and rate-limit/temporary-unavailability errors. Feature tracing, evidence-linked flow diagrams, multi-turn conversation, lessons, and account connection remain unimplemented.
 
 Preserve the explorer and deterministic structural map when implementing later milestones. Keep model-facing source evidence separate from trusted policy, and preserve distinctions between discovered, downloaded, parsed, and AI-supplied evidence.
 
@@ -772,7 +825,7 @@ Preserve the explorer and deterministic structural map when implementing later m
 
 1. Inspect the repository and current changes before editing.
 2. Read this README and any applicable developer instructions.
-3. Implement Milestone 3 in a small, complete vertical slice: bounded evidence packing, trusted tutor policy, Gemini provider, validated source references, and a saved overview. Preserve the explorer and structural map.
+3. Continue Milestone 4 with one supported source-grounded feature walkthrough and an evidence-linked flow diagram. Preserve scoped questions, saved scope when opening citations, explorer, maps, and overview validation/cache boundaries. Verify live model generation when provider access permits it; avoid repeated requests while quota or temporary availability is blocking it.
 4. Keep the data source real. Clearly label any temporary fixtures or demo data.
 5. Keep source retrieval, analysis, AI, and rendering behind explicit interfaces.
 6. Add meaningful checks for ingestion and source references as those features appear.
@@ -783,7 +836,7 @@ Proceed with the documented defaults for reversible implementation decisions. As
 
 ### Useful development prompts
 
-> Read README.md. Inspect the explorer and structural index, then implement Milestone 3: a grounded Gemini overview using bounded source excerpts and known evidence IDs. Reject fabricated references, cache versioned results, and handle missing configuration and quotas without losing the map. Explain the architecture briefly as you build, and update the README to match the implemented state.
+> Read README.md. Inspect the explorer, structural index, overview and scoped-question flow. Implement one supported source-grounded feature walkthrough and compact evidence-linked flow diagram. Reuse bounded evidence and reference validation, preserve saved results and question scope, and update the README to match actual behavior.
 
 > Read README.md and inspect the current implementation. Trace one supported feature using its actual source. Separate observed relationships, inferred behavior, and unresolved boundaries. Show me the smallest useful diagram and a reading order.
 
@@ -796,6 +849,8 @@ Provider interfaces, pricing, model availability, and platform rules can change.
 - [Gemini CLI context files and imports](https://geminicli.com/docs/cli/gemini-md/)
 - [Google Gen AI JavaScript/TypeScript SDK](https://googleapis.github.io/js-genai/)
 - [Gemini API documentation](https://ai.google.dev/gemini-api/docs)
+- [Gemini generateContent REST reference](https://ai.google.dev/api/generate-content)
+- [Gemini structured output](https://ai.google.dev/gemini-api/docs/structured-output)
 - [Gemini pricing and data-use distinctions](https://ai.google.dev/gemini-api/docs/pricing)
 - [Gemini rate limits](https://ai.google.dev/gemini-api/docs/rate-limits)
 - [GitHub App design and permissions](https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/deciding-when-to-build-a-github-app)

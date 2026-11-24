@@ -26,6 +26,7 @@ import {
   LoaderCircle,
   LockKeyhole,
   Network,
+  MessageCircle,
   Menu,
   Plus,
   Search,
@@ -48,6 +49,9 @@ import {
 import { FileTree } from "./file-tree";
 import { formatBytes, SourceViewer } from "./source-viewer";
 import { ArchitectureMap } from "./architecture-map";
+import { AiOverview } from "./ai-overview";
+import { RepositoryQuestions, type QuestionSession } from "./questions";
+import { workspaceError as asError } from "@/lib/browser/errors";
 
 const STEPS: { stage: ProgressStage; label: string }[] = [
   { stage: "resolving", label: "Resolve commit" },
@@ -55,7 +59,7 @@ const STEPS: { stage: ProgressStage; label: string }[] = [
   { stage: "indexing", label: "Select source" },
   { stage: "saving", label: "Save snapshot" },
 ];
-type View = "files" | "map" | "overview" | "coverage";
+type View = "files" | "map" | "guide" | "questions" | "overview" | "coverage";
 
 function Logo() {
   return (
@@ -103,6 +107,7 @@ export function Explorer() {
   const [progress, setProgress] = useState<Extract<ImportEvent, { type: "progress" }> | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [view, setView] = useState<View>("files");
+  const [questionSession, setQuestionSession] = useState<QuestionSession>({});
   const [query, setQuery] = useState("");
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
   const [retry, setRetry] = useState(0);
@@ -114,6 +119,7 @@ export function Explorer() {
   const selectedFile = snapshot?.files.find((file) => file.id === selectedId);
 
   function activate(next: RepositorySnapshot, fileId?: string | null, line?: number | null) {
+    setQuestionSession({});
     setSnapshot(next);
     const file =
       next.files.find((entry) => entry.id === fileId) ??
@@ -301,6 +307,7 @@ export function Explorer() {
   }
 
   function home() {
+    setQuestionSession({});
     importAbort.current?.abort();
     restoreAbort.current?.abort();
     setSnapshot(null);
@@ -610,15 +617,15 @@ export function Explorer() {
                     </div>
                     <span className="journey-number">02</span>
                   </article>
-                  <article className="journey-card future-card">
+                  <article className="journey-card">
                     <div className="journey-card-top">
                       <BookOpen size={20} />
-                      <span className="coming-label">ON THE ROADMAP</span>
+                      <span className="coming-label">OPTIONAL GEMINI</span>
                     </div>
                     <h3>Make it click.</h3>
                     <p>
-                      Ask better questions, unpack the concepts, and turn understanding into
-                      something you build.
+                      Ask about selected code, choose your explanation depth, and follow cited
+                      source. Connect Gemini for answers and an overview; exercises come later.
                     </p>
                     <div className="card-miniature lesson-miniature" aria-hidden="true">
                       <span>
@@ -657,8 +664,9 @@ export function Explorer() {
                   <p>
                     We read repository metadata and its file tree through GitHub, select up to 200
                     text files within a 2 MiB budget, and download source on demand. Snapshots and
-                    opened files are saved locally. Nothing from the repository is executed, and no
-                    source is sent to AI in this version.
+                    opened files are saved locally. Nothing from the repository is executed. AI
+                    overviews are optional: review bounded excerpts and choose to send them to
+                    Google Gemini. The source explorer and structural map need no AI key.
                   </p>
                 </details>
               </section>
@@ -727,6 +735,8 @@ export function Explorer() {
                   [
                     { id: "files", title: "Source explorer", icon: Code2 },
                     { id: "map", title: "Architecture map", icon: Network },
+                    { id: "guide", title: "AI overview", icon: Sparkles },
+                    { id: "questions", title: "Ask code", icon: MessageCircle },
                     { id: "overview", title: "Snapshot overview", icon: LayoutGrid },
                     { id: "coverage", title: "Coverage", icon: ListFilter },
                   ] as const
@@ -741,7 +751,14 @@ export function Explorer() {
                     onKeyDown={(event) => {
                       if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
                         event.preventDefault();
-                        const tabs: View[] = ["files", "map", "overview", "coverage"];
+                        const tabs: View[] = [
+                          "files",
+                          "map",
+                          "guide",
+                          "questions",
+                          "overview",
+                          "coverage",
+                        ];
                         const next =
                           tabs[
                             (tabs.indexOf(view) +
@@ -816,6 +833,18 @@ export function Explorer() {
                       if (selectedFile) updateLocation(snapshot, selectedFile, line);
                     }}
                     onRetry={() => setRetry((value) => value + 1)}
+                    onAsk={() => {
+                      if (!selectedId) return;
+                      setQuestionSession({
+                        draft: {
+                          question: "Explain how this code works.",
+                          fileId: selectedId,
+                          depth: "learn",
+                          ...(selectedLine ? { line: selectedLine } : {}),
+                        },
+                      });
+                      setView("questions");
+                    }}
                   />
                 </div>
               )}
@@ -846,16 +875,47 @@ export function Explorer() {
                   />
                 </div>
               )}
+              {view === "guide" && (
+                <div id="panel-guide" role="tabpanel" aria-labelledby="tab-guide">
+                  <AiOverview
+                    key={snapshot.id}
+                    snapshot={snapshot}
+                    onMap={() => setView("map")}
+                    onOpenFile={(fileId, line) => {
+                      const file = snapshot.files.find((entry) => entry.id === fileId);
+                      if (file) chooseFile(file, false, line);
+                    }}
+                  />
+                </div>
+              )}
               {view === "coverage" && (
                 <div id="panel-coverage" role="tabpanel" aria-labelledby="tab-coverage">
                   <Coverage snapshot={snapshot} onChoose={chooseFile} />
                 </div>
               )}
+              {view === "questions" && (
+                <div id="panel-questions" role="tabpanel" aria-labelledby="tab-questions">
+                  <RepositoryQuestions
+                    snapshot={snapshot}
+                    selectedFileId={selectedId}
+                    selectedLine={selectedLine}
+                    session={questionSession}
+                    onSession={setQuestionSession}
+                    onOpenFile={(fileId, line) => {
+                      const file = snapshot.files.find((entry) => entry.id === fileId);
+                      if (file) chooseFile(file, false, line);
+                    }}
+                    onSnapshotUpdated={(next) =>
+                      setSnapshot((current) => (current?.id === next.id ? next : current))
+                    }
+                  />
+                </div>
+              )}
               <div className="workspace-footnote">
                 <ShieldCheck size={13} />
                 <span>
-                  Static source relationships describe dependencies, not runtime calls. AI tutoring
-                  is a later step.
+                  Static relationships describe dependencies, not runtime calls. AI explanations are
+                  optional interpretations linked to source excerpts.
                 </span>
                 <span>
                   {!snapshot.discoveryComplete
@@ -871,35 +931,17 @@ export function Explorer() {
   );
 }
 
-function asError(error: unknown): ApiError {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-  )
-    return {
-      code: "code" in error && typeof error.code === "string" ? error.code : "REQUEST_FAILED",
-      message: error.message,
-      ...("retryAt" in error && typeof error.retryAt === "string"
-        ? { retryAt: error.retryAt }
-        : {}),
-    };
-  return {
-    code: "CONNECTION_ERROR",
-    message: "The request could not be completed. Check your connection and try again.",
-  };
-}
-
 function ErrorNotice({ error, dismiss }: { error: ApiError; dismiss: () => void }) {
   return (
     <div className="error-notice" role="alert">
       <CircleHelp size={18} />
       <div>
         <strong>
-          {error.code === "RATE_LIMITED"
-            ? "A short pause from GitHub."
-            : "We couldn’t complete that request."}
+          {error.code === "LOCAL_SERVER_UNREACHABLE"
+            ? "Abstract is not reachable."
+            : error.code === "RATE_LIMITED"
+              ? "A short pause from GitHub."
+              : "We couldn’t complete that request."}
         </strong>
         <p>{error.message}</p>
         {error.retryAt && <p>Retry after {new Date(error.retryAt).toLocaleTimeString()}.</p>}
@@ -1052,8 +1094,8 @@ function Overview({
               <dd>Read only, never executed</dd>
             </div>
             <div>
-              <dt>Sent to AI</dt>
-              <dd>Nothing</dd>
+              <dt>AI source sharing</dt>
+              <dd>Optional · review the AI overview tab</dd>
             </div>
           </dl>
         </section>

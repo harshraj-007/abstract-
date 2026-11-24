@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./architecture.css";
+import "./overview.css";
+import "./questions.css";
 
 export const metadata: Metadata = {
   title: "Abstract — A little context changes everything",

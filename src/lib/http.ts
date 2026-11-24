@@ -31,10 +31,10 @@ export function requireSameOrigin(request: Request) {
   }
 }
 
-export async function readSmallJson(request: Request): Promise<unknown> {
+export async function readSmallJson(request: Request, maxBytes = 2048): Promise<unknown> {
   if (!request.headers.get("content-type")?.includes("application/json"))
     throw new ExplorerError("INVALID_REQUEST", "Send a JSON request body.", 415);
-  if (!request.body) throw new ExplorerError("INVALID_REQUEST", "A repository URL is required.");
+  if (!request.body) throw new ExplorerError("INVALID_REQUEST", "A JSON request body is required.");
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -43,7 +43,7 @@ export async function readSmallJson(request: Request): Promise<unknown> {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 2048) {
+      if (size > maxBytes) {
         await reader.cancel();
         throw new ExplorerError("INVALID_REQUEST", "This request is too large.", 413);
       }

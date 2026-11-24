@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   AlertCircle,
   RefreshCw,
+  MessageCircle,
 } from "lucide-react";
 import {
   sourceLines,
@@ -59,6 +60,7 @@ export function SourceViewer({
   selectedLine,
   onLine,
   onRetry,
+  onAsk,
 }: {
   snapshot: RepositorySnapshot;
   file: SourceEntry | undefined;
@@ -68,6 +70,7 @@ export function SourceViewer({
   selectedLine: number | null;
   onLine: (line: number) => void;
   onRetry: () => void;
+  onAsk: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
@@ -116,6 +119,16 @@ export function SourceViewer({
         </div>
         {file && (
           <div className="source-actions">
+            <button
+              type="button"
+              className="icon-button"
+              disabled={!usableSource}
+              onClick={onAsk}
+              aria-label="Ask about this code"
+              title="Ask about this code"
+            >
+              <MessageCircle size={16} />
+            </button>
             <button
               type="button"
               className="icon-button"

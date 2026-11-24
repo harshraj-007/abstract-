@@ -26,22 +26,13 @@ import {
 } from "@/lib/contracts/analysis";
 import type { ApiError, RepositorySnapshot } from "@/lib/contracts/repository";
 import { DependencyDiagram } from "./dependency-diagram";
+import { workspaceError as toError } from "@/lib/browser/errors";
 
 type Inspector = "references" | "entries" | "symbols" | "unknowns";
 
 function isSupported(path: string) {
   return /\.(?:[cm]?[jt]s|[jt]sx)$/i.test(path);
 }
-function toError(error: unknown): ApiError {
-  if (error && typeof error === "object" && "message" in error && typeof error.message === "string")
-    return { code: "MAP_ERROR", message: error.message };
-  return {
-    code: "MAP_ERROR",
-    message:
-      "The map could not be built. Downloaded source and the previous saved map are still available.",
-  };
-}
-
 export function ArchitectureMap({
   snapshot,
   selectedFileId,
